@@ -22,11 +22,16 @@ Requires [uv](https://docs.astral.sh/uv/) (it manages the Python 3.14 toolchain 
 
 ```bash
 uv sync                                  # install exact locked dependencies
+docker compose up -d db                  # start PostgreSQL 18
+uv run alembic upgrade head              # apply migrations to an empty DB
 uv run uvicorn app.main:app --reload     # start the API at http://127.0.0.1:8000
-uv run pytest                            # run the test suite
+uv run pytest                            # run the test suite (needs the DB up)
 ```
 
 Interactive API docs: http://127.0.0.1:8000/docs
+
+Integration tests use real PostgreSQL (never SQLite). Start the database and apply
+migrations before running them.
 
 ## References and attribution
 
