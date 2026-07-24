@@ -18,7 +18,15 @@ Python 3.14 · FastAPI · Pydantic 2 · SQLAlchemy 2 (async) · PostgreSQL 18 ·
 
 ## Quickstart
 
-Coming with the first vertical slice.
+Requires [uv](https://docs.astral.sh/uv/) (it manages the Python 3.14 toolchain for you).
+
+```bash
+uv sync                                  # install exact locked dependencies
+uv run uvicorn app.main:app --reload     # start the API at http://127.0.0.1:8000
+uv run pytest                            # run the test suite
+```
+
+Interactive API docs: http://127.0.0.1:8000/docs
 
 ## References and attribution
 
