@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: fieldops
+      POSTGRES_PASSWORD: fieldops
+      POSTGRES_DB: fieldops
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18 recommends mounting the parent dir (data lives in a
+      # version subdir), so pg_upgrade works without mount-boundary issues.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldops -d fieldops"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
