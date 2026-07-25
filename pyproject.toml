@@ -3,7 +3,10 @@ name = "fieldops-workorder-bridge"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "asyncpg>=0.31.0",
     "fastapi>=0.139.2",
+    "pydantic-settings>=2.14.2",
+    "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.51.0",
 ]
 
@@ -12,6 +15,7 @@ dev = [
     "httpx2>=2.7.0",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.15.22",
 ]
 
@@ -38,3 +42,7 @@ warn_unreachable = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that require a real PostgreSQL database",
+]
