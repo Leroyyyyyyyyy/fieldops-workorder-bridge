@@ -32,4 +32,36 @@ Starlette's `TestClient` emitted a deprecation warning that its httpx-based tran
 
 ---
 
-<!-- Day 2 entries go below this line -->
+## Day 2 — Database, async session & migrations
+
+### 7. Why async SQLAlchemy + asyncpg instead of a sync ORM?
+
+FastAPI runs on an async event loop. Under load, a request that waits on the database should yield the event loop so other requests are served instead of blocking a worker thread. Async SQLAlchemy over asyncpg keeps I/O non-blocking end to end, which is where a web API actually spends its time. The cost is that everything touching the DB is `async`/`await` and I must never call blocking code inside a handler.
+
+### 8. Where do transaction boundaries live, and why in the dependency?
+
+The `get_session` dependency wraps the whole request: it commits if the handler returns normally and rolls back on any exception. So a request is an all-or-nothing unit of work — a business change and its audit event either both commit or both roll back. Putting this in one place (not scattered `commit()` calls in handlers) is what later guarantees the audit invariant.
+
+### 9. Why does Alembic own the schema instead of `Base.metadata.create_all`?
+
+`create_all` only ever builds the *current* model shape — it has no concept of migrating an existing database, so it can't be used in production where data already exists. Alembic gives ordered, reversible migrations with a recorded history, and I run the exact same migrations in tests, CI, and prod. The plan bans `create_all`, including in tests, for this reason.
+
+### 10. Why is the DB URL read from settings in `env.py`, not stored in `alembic.ini`?
+
+`alembic.ini` is committed, so a real connection string there would leak a secret. I set `sqlalchemy.url` in `env.py` from the same `pydantic-settings` object the app uses, so there is one source of truth (an env var) and no credentials in the repo.
+
+### 11. Why is `assets` the baseline table when the plan says "work_orders first"?
+
+`work_orders` has foreign keys to `assets` (and later `users`), so those tables must exist first — I build the schema in dependency order. `assets` has no FK dependencies, and the very next slice (issue #5) builds directly on it, so nothing is wasted. This is a small, deliberate deviation from the plan's wording for a correctness reason.
+
+### 12. Why generate IDs and timestamps with server defaults (`gen_random_uuid()`, `now()`)?
+
+The database is the single writer of record, so defaults belong there: every row gets a UUID and UTC timestamps regardless of which code path (API, seed script, a manual `INSERT`) created it. `updated_at` uses `onupdate=now()` so it can't be forgotten. Generating these in Python would let a buggy or alternative caller skip them.
+
+### 13. (Real problem hit) Postgres 18 container exited on first boot
+
+The compose volume mounted `/var/lib/postgresql/data`, but Postgres 18 changed its recommended layout: mount the parent `/var/lib/postgresql` and data lives in a version subdirectory, so `pg_upgrade --link` works without crossing a mount boundary. The old mount made the container `exit(1)` immediately. Fixed the mount point and documented why in `docker-compose.yml`.
+
+---
+
+<!-- Day 3 entries go below this line -->

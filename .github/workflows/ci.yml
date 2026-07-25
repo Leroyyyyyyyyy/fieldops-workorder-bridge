@@ -42,5 +42,8 @@ jobs:
       - name: Type check
         run: uv run mypy app tests
 
+      - name: Migration smoke test (empty DB -> head)
+        run: uv run alembic upgrade head
+
       - name: Tests
         run: uv run pytest

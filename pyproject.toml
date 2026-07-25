@@ -3,6 +3,7 @@ name = "fieldops-workorder-bridge"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.5",
     "asyncpg>=0.31.0",
     "fastapi>=0.139.2",
     "pydantic-settings>=2.14.2",
