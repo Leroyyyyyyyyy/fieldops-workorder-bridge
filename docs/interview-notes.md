@@ -133,3 +133,23 @@ Verified by breaking it deliberately: removing the `flush()` from the create han
 Clients need something stable to branch on, and a human-readable sentence is not it — wording changes are not supposed to be breaking changes. So handled errors return `code` (machine-readable, part of the contract), `message` (for a human reading a log) and `correlation_id`.
 
 `correlation_id` is always null right now because the middleware that would populate it does not exist yet. I included the field anyway: adding a key later is a change every consumer has to be told about, and the cost of carrying a null today is zero. Request-validation failures still return FastAPI's own 422 shape — unifying those is worth doing when the error contract is finished, not as a side effect of this slice.
+
+### 22. What happens to that 409 if the database or the driver changes underneath it?
+
+Deciding "this is a duplicate" by matching SQLSTATE `23505` *and* the constraint name couples an API contract to two things the API layer does not own: the name of a database object, and the shape of a driver's exception. Both couplings are real, so I measured what each one costs.
+
+Renaming the index makes the lookup return a name that no longer matches, the `IntegrityError` is re-raised, and the client gets a 500 instead of a 409. Two tests fail immediately, so it cannot reach `main` quietly. Changing drivers degrades the same way and just as loudly:
+
+| Driver | Constraint name available? | Result |
+|---|---|---|
+| asyncpg (current) | yes, on the wrapped `__cause__` | 409 |
+| psycopg 3 | no — SQLAlchemy passes its error through as `orig`, nothing wrapped | 500 |
+| psycopg 2 | no — and it spells the code `pgcode`, not `sqlstate` | 500 |
+
+The portable alternative is to match SQLSTATE alone, but it is coarser: every unique constraint on the table would then report itself as a duplicate `external_id`, which becomes wrong the moment a second one exists. I kept the precise version, because a misleading error code during an incident costs more than a driver migration that CI catches on the first run.
+
+### 23. Which test actually protects the 409, and how do I know?
+
+Only one of them, and finding out which took an experiment rather than a reading. `test_rejected_duplicate_leaves_the_original_intact` checks that a rejected duplicate leaves the first row intact; it never asserts the status code of the rejected request. When I removed the 409 mapping and added a generic 500 handler, that test stayed green while the endpoint's behaviour was broken. It fails today only because the unhandled exception escapes the test transport — an accident of the client, not an assertion.
+
+That is a reasonable design, since each test asserts one thing and the status code is covered by `test_duplicate_external_id_is_rejected_with_409`. The point is what it implies: delete that one test and the suite is still green while the contract is unguarded. "The suite passes" and "the behaviour is covered" are different claims, and the only way I know of to tell them apart is to break the code on purpose and watch which tests notice.
