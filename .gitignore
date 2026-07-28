@@ -24,3 +24,9 @@ htmlcov/
 
 # Azure
 .azure/
+
+# Session handoff (local, not project content)
+HANDOFF.md
+
+# Personal planning docs (local, not project content)
+PLAN.md
