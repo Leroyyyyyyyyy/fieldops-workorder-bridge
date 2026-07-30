@@ -153,3 +153,31 @@ The portable alternative is to match SQLSTATE alone, but it is coarser: every un
 Only one of them, and finding out which took an experiment rather than a reading. `test_rejected_duplicate_leaves_the_original_intact` checks that a rejected duplicate leaves the first row intact; it never asserts the status code of the rejected request. When I removed the 409 mapping and added a generic 500 handler, that test stayed green while the endpoint's behaviour was broken. It fails today only because the unhandled exception escapes the test transport — an accident of the client, not an assertion.
 
 That is a reasonable design, since each test asserts one thing and the status code is covered by `test_duplicate_external_id_is_rejected_with_409`. The point is what it implies: delete that one test and the suite is still green while the contract is unguarded. "The suite passes" and "the behaviour is covered" are different claims, and the only way I know of to tell them apart is to break the code on purpose and watch which tests notice.
+
+---
+
+## Day 4 — Work order slice and its foreign key
+
+### 24. Why is an unknown asset a 404 rather than a 500 or a 400?
+
+The request is syntactically valid — a well-formed UUID in the right field — so it passes schema validation and reaches the database, where the foreign key rejects it. Without handling, that surfaces as an unhandled `IntegrityError` and a 500, which tells the client "we broke" when the truth is "you referenced something that does not exist".
+
+I chose 404 over 400 because the failure is about a resource that isn't there, which is what 404 means, and because it matches what `GET /assets/{id}` already returns for the same missing asset. A client that sees the same code for the same cause on both endpoints needs one branch, not two. The pattern is the same as the duplicate `external_id` 409: the database is the only race-free arbiter, so the violation necessarily arrives after the INSERT, and the handler's job is to translate it into the right contract.
+
+### 25. Why name the foreign key explicitly, and why pin the name in a test?
+
+Because the API decides 404-vs-500 by comparing the violated constraint's name, and I would rather match a name we chose than one PostgreSQL generated. Left to itself the constraint would be `work_orders_asset_id_fkey`; naming it `fk_work_orders_asset_id_assets` also means it already matches the convention the models will adopt, so adopting that convention later produces no drift to reconcile.
+
+The coupling is still real, so there is a test asserting that a foreign key with exactly that name exists on the table. Renaming the constraint now fails a test whose name says what is wrong, instead of failing two endpoint tests with an `IntegrityError` that has to be traced back. Verified by pointing the constant at the old default name: three tests fail, and the pinning test is the one that explains why.
+
+### 26. Why can't a client set `status` or `version` on create?
+
+They are absent from the create schema, so a caller that sends them is ignored and the work order still starts at NEW with version 1 — there is a test for exactly that. If `status` were settable, the state machine would have a way around itself: a client could POST a work order that is already COMPLETED and skip every transition rule and audit event the design exists to guarantee. Ownership is the point — the client owns what work is needed, the server owns where that work has got to.
+
+`version` is a column now but nothing increments it yet; the optimistic concurrency checks that will read it belong with the command endpoints.
+
+### 27. Why is `asset_id` indexed but `status` deliberately not?
+
+PostgreSQL does not create an index for a foreign key automatically, and every lookup of a work order goes through its asset, so `asset_id` is indexed.
+
+`status` is left unindexed on purpose. It is the obvious column to filter on, which makes it the right subject for the query and index evidence work later: with a realistically sized table, the same filter can be shown as a sequential scan before an index and an index scan after. Adding the index now would remove the demonstration and leave nothing measurable to talk about.
