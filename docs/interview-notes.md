@@ -181,3 +181,21 @@ They are absent from the create schema, so a caller that sends them is ignored a
 PostgreSQL does not create an index for a foreign key automatically, and every lookup of a work order goes through its asset, so `asset_id` is indexed.
 
 `status` is left unindexed on purpose. It is the obvious column to filter on, which makes it the right subject for the query and index evidence work later: with a realistically sized table, the same filter can be shown as a sequential scan before an index and an index scan after. Adding the index now would remove the demonstration and leave nothing measurable to talk about.
+
+---
+
+## Day 5 — Two review findings, fixed
+
+### 28. Why reject unknown request fields instead of ignoring them?
+
+Pydantic drops fields it does not recognise by default, so a caller sending `descriptoin` gets a 201 and a work order with no description. For an API whose callers are other systems rather than people, that is silent data loss: nobody proof-reads a machine's JSON, and the mistake surfaces months later as missing data with no error anywhere to explain it. `extra="forbid"` turns it into a 422 on the integration's first call, which is the cheapest moment it can possibly fail.
+
+I put the setting on a shared `RequestModel` base rather than on each schema, because it is a policy about how this API treats its callers, not a decision to re-make every time a schema is added. It also applies to the already-merged asset endpoint: two slices behaving differently on the same question is worse than either behaviour on its own.
+
+The cost is that adding a field to a request schema can now break a caller who was already sending it under a name we did not know about — which is the right direction, since knowing what our own API accepts is our job.
+
+### 29. What a test that assumed an empty database taught me
+
+`test_rejected_work_order_leaves_no_partial_row` asserted `count(*) == 0` over the whole table. Every test runs inside a transaction that is rolled back, so I read that as "the table is empty" — but the rollback only discards *this test's* writes. Rows committed by anything else, including a manual `curl` against the same development database, are perfectly visible to it. Inserting a single row made the test fail with `assert 1 == 0`, which points at rollback rather than at the real cause.
+
+The fix is to scope the assertion to the row the request would have written, using the asset id the test generated. The general rule: an assertion over "everything in the table" is really an assertion about the environment, and the environment is not something the test controls. The neighbouring asset tests already avoided this by asserting membership rather than totals — the inconsistency between two slices was the tell, which is the argument for reviewing the second implementation of a pattern side by side with the first rather than on its own.

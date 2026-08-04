@@ -10,37 +10,46 @@ from app.models.asset import Asset
 
 pytestmark = pytest.mark.integration
 
-NEW_ASSET: dict[str, Any] = {
-    "external_id": "VND-ASSET-001",
-    "site": "North Yard",
-    "name": "Conveyor 3",
-    "asset_type": "CONVEYOR",
-}
+
+def new_asset(**overrides: Any) -> dict[str, Any]:
+    """A create payload with a unique `external_id`.
+
+    The test transaction is rolled back, but rows committed outside the suite (a
+    manual curl against the same database) are visible to it, so a fixed
+    `external_id` would eventually collide with one and fail for the wrong reason.
+    """
+    payload: dict[str, Any] = {
+        "external_id": f"VND-ASSET-{uuid4().hex[:12]}",
+        "site": "North Yard",
+        "name": "Conveyor 3",
+        "asset_type": "CONVEYOR",
+    }
+    return payload | overrides
 
 
 async def test_create_asset_persists_and_returns_server_generated_fields(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    response = await client.post("/assets", json=NEW_ASSET)
+    asset = new_asset()
+
+    response = await client.post("/assets", json=asset)
 
     assert response.status_code == 201
     body = response.json()
-    assert body["external_id"] == NEW_ASSET["external_id"]
+    assert body["external_id"] == asset["external_id"]
     # Fields the client never sent: the id and timestamps come from PostgreSQL,
     # and the status from the column default.
     assert body["id"]
     assert body["created_at"] and body["updated_at"]
     assert body["status"] == "ACTIVE"
 
-    stored = (
-        await db_session.execute(select(Asset).where(Asset.external_id == NEW_ASSET["external_id"]))
-    ).scalar_one()
-    assert str(stored.id) == body["id"]
-    assert stored.name == NEW_ASSET["name"]
+    stored = (await db_session.execute(select(Asset).where(Asset.id == body["id"]))).scalar_one()
+    assert stored.external_id == asset["external_id"]
+    assert stored.name == asset["name"]
 
 
 async def test_created_asset_can_be_fetched_by_id(client: AsyncClient) -> None:
-    created = (await client.post("/assets", json=NEW_ASSET)).json()
+    created = (await client.post("/assets", json=new_asset())).json()
 
     response = await client.get(f"/assets/{created['id']}")
 
@@ -49,33 +58,33 @@ async def test_created_asset_can_be_fetched_by_id(client: AsyncClient) -> None:
 
 
 async def test_duplicate_external_id_is_rejected_with_409(client: AsyncClient) -> None:
-    assert (await client.post("/assets", json=NEW_ASSET)).status_code == 201
+    asset = new_asset()
+    assert (await client.post("/assets", json=asset)).status_code == 201
 
-    response = await client.post("/assets", json={**NEW_ASSET, "name": "Different name"})
+    response = await client.post("/assets", json={**asset, "name": "Different name"})
 
     assert response.status_code == 409
     body = response.json()
     assert body["code"] == "DUPLICATE_EXTERNAL_ID"
-    assert NEW_ASSET["external_id"] in body["message"]
+    assert asset["external_id"] in body["message"]
     assert body["correlation_id"] is None
 
 
 async def test_rejected_duplicate_leaves_the_original_intact(client: AsyncClient) -> None:
     """The failed request rolls back without touching the row already committed."""
-    created = (await client.post("/assets", json=NEW_ASSET)).json()
+    asset = new_asset()
+    created = (await client.post("/assets", json=asset)).json()
 
-    await client.post("/assets", json={**NEW_ASSET, "name": "Different name"})
+    await client.post("/assets", json={**asset, "name": "Different name"})
 
     response = await client.get(f"/assets/{created['id']}")
     assert response.status_code == 200
-    assert response.json()["name"] == NEW_ASSET["name"]
+    assert response.json()["name"] == asset["name"]
 
 
 async def test_list_returns_created_assets(client: AsyncClient) -> None:
-    first = (await client.post("/assets", json=NEW_ASSET)).json()
-    second = (
-        await client.post("/assets", json={**NEW_ASSET, "external_id": "VND-ASSET-002"})
-    ).json()
+    first = (await client.post("/assets", json=new_asset())).json()
+    second = (await client.post("/assets", json=new_asset())).json()
 
     response = await client.get("/assets")
 
@@ -93,6 +102,16 @@ async def test_unknown_asset_id_returns_404(client: AsyncClient) -> None:
 
 
 async def test_blank_external_id_is_rejected(client: AsyncClient) -> None:
-    response = await client.post("/assets", json={**NEW_ASSET, "external_id": ""})
+    response = await client.post("/assets", json=new_asset(external_id=""))
+
+    assert response.status_code == 422
+
+
+async def test_misspelled_field_is_rejected(client: AsyncClient) -> None:
+    """Silently dropping an unknown field would lose the caller's data."""
+    payload = new_asset()
+    payload["nmae"] = payload.pop("name")
+
+    response = await client.post("/assets", json=payload)
 
     assert response.status_code == 422

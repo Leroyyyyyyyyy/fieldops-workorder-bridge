@@ -4,15 +4,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.base import RequestModel
+
 Priority = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
 
-class WorkOrderCreate(BaseModel):
+class WorkOrderCreate(RequestModel):
     """The client-supplied half of a work order.
 
     `status` and `version` are absent on purpose: a work order always starts at
     NEW, and status only ever changes through the explicit command endpoints. If
     a caller could set it here, the state machine would have a way around itself.
+    Supplying them is rejected rather than ignored — see `RequestModel`.
     """
 
     asset_id: UUID
@@ -30,6 +33,9 @@ class WorkOrderRead(BaseModel):
     asset_id: UUID
     title: str
     description: str | None
+    # `str`, not `Priority`: the database has no CHECK constraint yet, so a row
+    # written by a seed script or a manual fix could hold a value outside the
+    # literal set. Reads must surface such a row, not fail on it.
     priority: str
     status: str
     version: int
