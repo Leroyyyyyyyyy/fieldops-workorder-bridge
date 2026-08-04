@@ -3,8 +3,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.base import RequestModel
 
-class AssetCreate(BaseModel):
+
+class AssetCreate(RequestModel):
     """The client-supplied half of an asset.
 
     Deliberately excludes `id`, `status` and the timestamps: those are owned by
