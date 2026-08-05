@@ -14,6 +14,8 @@ from app.schemas.work_order import (
     AssignRequest,
     CancelRequest,
     CompleteRequest,
+    ReassignRequest,
+    StartRequest,
     WorkOrderCreate,
     WorkOrderRead,
 )
@@ -97,9 +99,27 @@ async def assign_work_order(
     return work_order
 
 
+@router.post("/{work_order_id}/reassign", response_model=WorkOrderRead)
+async def reassign_work_order(
+    work_order_id: UUID, payload: ReassignRequest, session: SessionDep
+) -> WorkOrder:
+    """ASSIGNED / IN_PROGRESS -> ASSIGNED, with a different assignee.
+
+    Its own command rather than a second ASSIGN, so the audit trail records that
+    the work changed hands instead of showing two identical events.
+    """
+    work_order = await _get_or_404(session, work_order_id)
+    _apply(work_order, Command.REASSIGN)
+    work_order.assignee_id = payload.assignee_id
+    await session.flush()
+    return work_order
+
+
 @router.post("/{work_order_id}/start", response_model=WorkOrderRead)
-async def start_work_order(work_order_id: UUID, session: SessionDep) -> WorkOrder:
-    """ASSIGNED -> IN_PROGRESS. Carries no body: starting work adds no new facts."""
+async def start_work_order(
+    work_order_id: UUID, payload: StartRequest, session: SessionDep
+) -> WorkOrder:
+    """ASSIGNED -> IN_PROGRESS. The body is empty; see `StartRequest` for why it exists."""
     work_order = await _get_or_404(session, work_order_id)
     _apply(work_order, Command.START)
     await session.flush()

@@ -35,6 +35,7 @@ class Command(StrEnum):
     """
 
     ASSIGN = "ASSIGN"
+    REASSIGN = "REASSIGN"
     START = "START"
     COMPLETE = "COMPLETE"
     CANCEL = "CANCEL"
@@ -48,12 +49,20 @@ class Transition(NamedTuple):
 #: The whole state machine. `NEW -> ASSIGNED -> IN_PROGRESS -> COMPLETED`, with
 #: cancellation available from any non-terminal status.
 #:
-#: Reassignment (ASSIGN from ASSIGNED) is not allowed: the contract lists exactly
-#: one transition into ASSIGNED, and quietly widening it here would make the
-#: diagram and the code disagree. If reassignment is needed it should be its own
-#: command, with its own audit event.
+#: Reassignment is its own command rather than a second ASSIGN. Widening ASSIGN
+#: would be a smaller change, but the audit trail would then show two identical
+#: ASSIGN events and a reader would have to compare payloads to discover that the
+#: second one changed hands. The events should say what happened.
+#:
+#: REASSIGN lands on ASSIGNED from either side: handing work to someone else means
+#: the new assignee has not started it, so they must start it themselves. That
+#: also keeps `started work` and `is assigned` from drifting apart.
 TRANSITIONS: dict[Command, Transition] = {
     Command.ASSIGN: Transition(frozenset({WorkOrderStatus.NEW}), WorkOrderStatus.ASSIGNED),
+    Command.REASSIGN: Transition(
+        frozenset({WorkOrderStatus.ASSIGNED, WorkOrderStatus.IN_PROGRESS}),
+        WorkOrderStatus.ASSIGNED,
+    ),
     Command.START: Transition(frozenset({WorkOrderStatus.ASSIGNED}), WorkOrderStatus.IN_PROGRESS),
     Command.COMPLETE: Transition(
         frozenset({WorkOrderStatus.IN_PROGRESS}), WorkOrderStatus.COMPLETED

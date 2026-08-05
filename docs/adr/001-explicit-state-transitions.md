@@ -10,7 +10,9 @@ The conventional REST shape for this is a single `PATCH /work-orders/{id}` accep
 
 ## Decision
 
-Four explicit command endpoints — `POST /work-orders/{id}/assign`, `/start`, `/complete`, `/cancel` — and no way to write `status` directly. `status` is absent from the create schema and from any update schema; the only thing that can change it is a command.
+Explicit command endpoints — `POST /work-orders/{id}/assign`, `/reassign`, `/start`, `/complete`, `/cancel` — and no way to write `status` directly. `status` is absent from the create schema and from any update schema; the only thing that can change it is a command.
+
+Reassignment is the case that tested the principle. Handing work to a different technician could have been a second `ASSIGN`, allowed from `ASSIGNED` — one line in the transition table instead of a new endpoint. It is a separate command because the audit trail would otherwise show two identical `ASSIGN` events, and a reader would have to compare payloads to discover that the second one changed hands. The commands are supposed to name what happened; "assigned" and "reassigned" are different things that happened.
 
 The rules themselves live in a domain module as a pure function of `(command, current status)`, so the full transition matrix is unit-tested without a database or an HTTP request.
 
@@ -26,7 +28,8 @@ The rules themselves live in a domain module as a pure function of `(command, cu
 
 **What it costs**
 
-- Four endpoints instead of one, and a client that wants to change priority and status together needs two calls. Accepted: those are different kinds of change — one is editing a field, the other is an event in the work order's life.
+- Five endpoints instead of one, and a client that wants to change priority and status together needs two calls. Accepted: those are different kinds of change — one is editing a field, the other is an event in the work order's life.
+- `start` takes an empty request body it does not read. Without a body FastAPI never inspects the request at all, so it would be the one command that silently ignores an unknown or misspelled field while the others reject it; and a field the commands all eventually need would then have to introduce a body where there was none.
 - The transition table is stated twice, in the domain module and in the unit test matrix, deliberately: a change to the rules has to be made in both places, so it cannot be made accidentally.
 - It is not what a reviewer expects from "REST CRUD", so the reasoning has to be legible — hence this record.
 

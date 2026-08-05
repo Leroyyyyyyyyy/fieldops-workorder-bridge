@@ -231,3 +231,19 @@ Entry 18 argued the value domain belongs in the database and the transition rule
 What they cannot express is legality of a *move*, since that depends on the current row and eventually on who is asking. That stays in the domain module. The division is worth being able to state plainly: the database guarantees which values exist, the application guarantees how they change.
 
 Note also that Alembic's autogenerate detected the three new columns and neither constraint — it does not compare CHECK constraints — so both were written into the migration by hand. That is the same class of blind spot as entry 16.
+
+### 34. Why is reassignment a new command rather than one more line in the table?
+
+Reviewing the state machine against the real workflow found a gap: `ASSIGN` was legal only from `NEW`, so once a work order was assigned there was no way to change who held it. A technician going off shift meant cancelling the work order and raising a new one, which loses the history and puts a false "cancelled" in the audit trail.
+
+The cheap fix would have been to let `ASSIGN` run from `ASSIGNED` too — one line. It was rejected because of what the audit trail would then read like: two identical `ASSIGN` events, where the only way to discover that the second one changed hands is to compare payloads. Events should say what happened, so reassignment is its own command with its own name.
+
+`REASSIGN` lands on `ASSIGNED` from either `ASSIGNED` or `IN_PROGRESS`. Handing work to someone else means the new assignee has not started it, whatever the previous one had done, so they start it themselves — which also keeps "someone is working on this" from drifting away from the status that claims it.
+
+### 35. Why does `start` take a request body it never reads?
+
+Because without one, FastAPI does not look at the request body at all, and `extra="forbid"` (entry 28) never runs. Measured before fixing it: `POST /start` with `{"total_nonsense": 123}` returned 200 and ignored it, while the same junk sent to `/complete` returned 422. One API, two answers to the same question, and the inconsistent one was the endpoint with nothing to validate.
+
+The second reason is forward-looking. Optimistic concurrency will put an `expected_version` field on every command. With a body already there that is a new field on an existing shape; without one, `start` grows a body where a caller previously sent nothing, and any caller that had been sending `expected_version` all along would have had it silently ignored until the day it started being enforced.
+
+The cost is a schema class with no fields, which looks silly in isolation. Worth it: a rule that holds on three endpoints out of four is not a rule, it is a habit.

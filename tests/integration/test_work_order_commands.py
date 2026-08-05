@@ -45,6 +45,8 @@ async def create_work_order(client: AsyncClient) -> dict[str, Any]:
 async def command(
     client: AsyncClient, work_order_id: str, name: str, body: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    """Every command takes a body, `start`'s being an empty one."""
+    body = {} if body is None else body
     response = await client.post(f"/work-orders/{work_order_id}/{name}", json=body)
     assert response.status_code == 200, response.text
     payload: dict[str, Any] = response.json()
@@ -85,7 +87,7 @@ async def test_full_legal_path_moves_status_and_counts_versions(client: AsyncCli
     assert assigned.json()["assignee_id"] == ASSIGNEE
     assert assigned.json()["version"] == 2
 
-    started = await client.post(f"/work-orders/{work_order_id}/start")
+    started = await client.post(f"/work-orders/{work_order_id}/start", json={})
     assert started.status_code == 200
     assert started.json()["status"] == "IN_PROGRESS"
     assert started.json()["version"] == 3
@@ -140,16 +142,19 @@ async def test_cancel_is_allowed_from_every_non_terminal_status(
 @pytest.mark.parametrize(
     ("from_status", "command", "body"),
     [
-        ("NEW", "start", None),
+        ("NEW", "start", {}),
         ("NEW", "complete", {"resolution": RESOLUTION}),
+        ("NEW", "reassign", {"assignee_id": ASSIGNEE}),
         ("ASSIGNED", "assign", {"assignee_id": ASSIGNEE}),
         ("ASSIGNED", "complete", {"resolution": RESOLUTION}),
         ("IN_PROGRESS", "assign", {"assignee_id": ASSIGNEE}),
-        ("IN_PROGRESS", "start", None),
-        ("COMPLETED", "start", None),
+        ("IN_PROGRESS", "start", {}),
+        ("COMPLETED", "start", {}),
         ("COMPLETED", "cancel", {"reason": REASON}),
+        ("COMPLETED", "reassign", {"assignee_id": ASSIGNEE}),
         ("CANCELLED", "assign", {"assignee_id": ASSIGNEE}),
         ("CANCELLED", "complete", {"resolution": RESOLUTION}),
+        ("CANCELLED", "reassign", {"assignee_id": ASSIGNEE}),
     ],
 )
 async def test_illegal_transition_returns_409(
@@ -170,7 +175,7 @@ async def test_rejected_command_leaves_the_row_untouched(
     """The 409 rolls back: no status change, and no half-applied version bump."""
     completed = await advance_to(client, "COMPLETED")
 
-    response = await client.post(f"/work-orders/{completed['id']}/start")
+    response = await client.post(f"/work-orders/{completed['id']}/start", json={})
     assert response.status_code == 409
 
     stored = (
@@ -207,7 +212,47 @@ async def test_blank_resolution_is_rejected(client: AsyncClient) -> None:
 
 
 async def test_command_on_unknown_work_order_returns_404(client: AsyncClient) -> None:
-    response = await client.post(f"/work-orders/{uuid4()}/start")
+    response = await client.post(f"/work-orders/{uuid4()}/start", json={})
 
     assert response.status_code == 404
     assert response.json()["code"] == "WORK_ORDER_NOT_FOUND"
+
+
+async def test_reassigning_changes_the_assignee_and_keeps_it_assigned(client: AsyncClient) -> None:
+    work_order = await advance_to(client, "ASSIGNED")
+    other_technician = str(uuid4())
+
+    reassigned = await command(
+        client, work_order["id"], "reassign", {"assignee_id": other_technician}
+    )
+
+    assert reassigned["status"] == "ASSIGNED"
+    assert reassigned["assignee_id"] == other_technician
+    assert reassigned["version"] == work_order["version"] + 1
+
+
+async def test_reassigning_in_progress_work_returns_it_to_assigned(client: AsyncClient) -> None:
+    """The new assignee has not started the work, whoever else had."""
+    work_order = await advance_to(client, "IN_PROGRESS")
+    other_technician = str(uuid4())
+
+    reassigned = await command(
+        client, work_order["id"], "reassign", {"assignee_id": other_technician}
+    )
+
+    assert reassigned["status"] == "ASSIGNED"
+    assert reassigned["assignee_id"] == other_technician
+    # ...and the new assignee has to start it themselves before completing.
+    started = await command(client, work_order["id"], "start")
+    assert started["status"] == "IN_PROGRESS"
+
+
+async def test_start_rejects_an_unknown_field(client: AsyncClient) -> None:
+    """`start` takes an empty body so that it refuses junk like every other command."""
+    work_order = await advance_to(client, "ASSIGNED")
+
+    response = await client.post(
+        f"/work-orders/{work_order['id']}/start", json={"expected_version": 99}
+    )
+
+    assert response.status_code == 422

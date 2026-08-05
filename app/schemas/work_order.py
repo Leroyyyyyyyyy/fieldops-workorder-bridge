@@ -34,6 +34,29 @@ class AssignRequest(RequestModel):
     assignee_id: UUID
 
 
+class ReassignRequest(RequestModel):
+    """Hand the work to someone else.
+
+    No reason field yet: a reason belongs on the audit event, not on the row,
+    because a work order can be reassigned repeatedly and a column would only
+    ever hold the latest one. It arrives with the audit trail.
+    """
+
+    assignee_id: UUID
+
+
+class StartRequest(RequestModel):
+    """Deliberately empty.
+
+    Starting work adds no facts, so there is nothing to send — but the endpoint
+    still takes a body, for two reasons. Without one FastAPI never looks at the
+    request body at all, so `extra="forbid"` would not apply and `start` would be
+    the one command that silently ignores a misspelled or unknown field. And when
+    the commands grow a field they all need, adding it here is then a new field on
+    an existing body rather than a body appearing where there was none.
+    """
+
+
 class CompleteRequest(RequestModel):
     """A resolution is required: a completed work order that does not say what was
     done is not an audit trail, it is a status flag."""

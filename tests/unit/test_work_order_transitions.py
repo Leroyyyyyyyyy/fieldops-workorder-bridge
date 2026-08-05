@@ -29,6 +29,13 @@ MATRIX: dict[tuple[Command, WorkOrderStatus], WorkOrderStatus | None] = {
     (Command.ASSIGN, IN_PROGRESS): None,
     (Command.ASSIGN, COMPLETED): None,
     (Command.ASSIGN, CANCELLED): None,
+    # Reassignment returns the work order to ASSIGNED: the new assignee has not
+    # started it, whatever the previous one had done.
+    (Command.REASSIGN, NEW): None,
+    (Command.REASSIGN, ASSIGNED): ASSIGNED,
+    (Command.REASSIGN, IN_PROGRESS): ASSIGNED,
+    (Command.REASSIGN, COMPLETED): None,
+    (Command.REASSIGN, CANCELLED): None,
     (Command.START, NEW): None,
     (Command.START, ASSIGNED): IN_PROGRESS,
     (Command.START, IN_PROGRESS): None,
