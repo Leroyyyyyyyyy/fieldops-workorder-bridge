@@ -247,3 +247,33 @@ Because without one, FastAPI does not look at the request body at all, and `extr
 The second reason is forward-looking. Optimistic concurrency will put an `expected_version` field on every command. With a body already there that is a new field on an existing shape; without one, `start` grows a body where a caller previously sent nothing, and any caller that had been sending `expected_version` all along would have had it silently ignored until the day it started being enforced.
 
 The cost is a schema class with no fields, which looks silly in isolation. Worth it: a rule that holds on three endpoints out of four is not a rule, it is a habit.
+
+---
+
+## Day 7 — The audit trail
+
+### 36. What actually guarantees that every change has an event?
+
+Two different mechanisms, for the two halves of the invariant.
+
+*No work order without its event* is guaranteed by structure, not by discipline: `_apply` is the only code path that writes a status change, and it records the event itself. There is no endpoint that can move a work order without going through it, so there is no place to forget. Verified by deleting the recording line — three tests fail immediately.
+
+*No event without its work order* is guaranteed by the database: the foreign key from `work_order_events.work_order_id` refuses an orphan outright, tested by hand against the running database. That one does not depend on the application being correct at all.
+
+Atomicity comes free from where the transaction boundary already was (entry 8). The event is added to the same session as the business change, so the dependency commits both or rolls back both — a rejected command leaves neither a version bump nor an event, which is asserted directly.
+
+### 37. Why is the history ordered by version rather than by time?
+
+Because `created_at` cannot break ties. PostgreSQL's `now()` is the transaction start time (entry 32), so any two events written in the same transaction carry identical timestamps and sorting by them is undefined. That is not hypothetical — it is exactly what happens in every test, where all requests share one transaction.
+
+Each event records `work_order_version`, the version the change produced. Version increments exactly once per change, so it is a total order over one work order's history, and it also answers "what did this look like at version 3" without any timestamp arithmetic. Ordering by a clock is a habit worth questioning whenever the clock is not guaranteed to advance between the things being ordered.
+
+### 38. Why is CREATE an event type but not a command?
+
+A command is a transition out of an existing status; creation is not one, so putting it in the `Command` enum would mean an entry in the transition table with no meaningful `allowed_from`. But leaving it out of the history entirely would mean the event stream is the whole life of a work order *except its first moment*, and "when was this raised, and by whom" is exactly the sort of question an audit trail exists to answer.
+
+So there are two enums, with `WorkOrderEventType` a superset of `Command`, and a unit test asserting that every command has a matching event type — a new command cannot exist without a way to record it.
+
+### 39. Autogenerate rendered the CHECK constraints this time
+
+Entry 33 noted that Alembic detected neither CHECK constraint when they were added to an existing table. Adding a *new* table with the same constraints, autogenerate emitted both without prompting. The distinction is that it renders constraints as part of `create_table`, but does not *compare* constraints on a table that already exists. Useful to know precisely, because "Alembic doesn't handle CHECK constraints" is the kind of half-true rule that leads to writing migrations by hand that did not need it.

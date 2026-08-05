@@ -86,3 +86,12 @@ def test_invalid_transition_names_the_command_and_status() -> None:
     assert error.current is COMPLETED
     assert "START" in str(error)
     assert "COMPLETED" in str(error)
+
+
+def test_every_command_has_a_matching_event_type() -> None:
+    """A new command must not be able to exist without a way to record it."""
+    from app.domain.work_order_status import WorkOrderEventType
+
+    assert {command.value for command in Command} <= {
+        event_type.value for event_type in WorkOrderEventType
+    }

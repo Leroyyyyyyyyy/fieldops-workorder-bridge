@@ -91,3 +91,26 @@ class WorkOrderRead(BaseModel):
     cancellation_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkOrderEventRead(BaseModel):
+    """One entry in a work order's history.
+
+    `work_order_version` is the version the change produced; it is also what the
+    history is ordered by, because `created_at` cannot break ties between events
+    written in the same transaction.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_order_id: UUID
+    event_type: str
+    old_status: str | None
+    new_status: str
+    work_order_version: int
+    actor_id: UUID | None
+    source: str
+    reason: str | None
+    correlation_id: str | None
+    created_at: datetime

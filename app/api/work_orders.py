@@ -1,15 +1,25 @@
+from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import ApiError
 from app.db.errors import foreign_key_violation_constraint
 from app.db.session import get_session
-from app.domain.work_order_status import Command, InvalidTransition, WorkOrderStatus, next_status
+from app.domain.work_order_status import (
+    Command,
+    EventSource,
+    InvalidTransition,
+    WorkOrderEventType,
+    WorkOrderStatus,
+    next_status,
+)
 from app.models.work_order import WorkOrder
+from app.models.work_order_event import WorkOrderEvent
 from app.schemas.work_order import (
     AssignRequest,
     CancelRequest,
@@ -17,6 +27,7 @@ from app.schemas.work_order import (
     ReassignRequest,
     StartRequest,
     WorkOrderCreate,
+    WorkOrderEventRead,
     WorkOrderRead,
 )
 
@@ -49,6 +60,9 @@ async def create_work_order(payload: WorkOrderCreate, session: SessionDep) -> Wo
             code="ASSET_NOT_FOUND",
             message=f"No asset with id {payload.asset_id}.",
         ) from exc
+    # The work order's first moment belongs in its history too, so the event
+    # stream is the whole life of the row rather than everything after it.
+    _record(session, work_order, WorkOrderEventType.CREATE, old_status=None)
     return work_order
 
 
@@ -68,15 +82,48 @@ async def _get_or_404(session: AsyncSession, work_order_id: UUID) -> WorkOrder:
     return work_order
 
 
-def _apply(work_order: WorkOrder, command: Command) -> None:
-    """Move the work order, or reject the command as an illegal transition.
+def _record(
+    session: AsyncSession,
+    work_order: WorkOrder,
+    event_type: WorkOrderEventType,
+    old_status: str | None,
+    reason: str | None = None,
+) -> None:
+    """Append the audit row for a change that has just been made to `work_order`.
+
+    Added to the same session as the change itself, so the two are one unit of
+    work: the dependency commits both or rolls back both. There is no code path
+    that writes a state change without coming through here.
+    """
+    session.add(
+        WorkOrderEvent(
+            work_order_id=work_order.id,
+            event_type=event_type,
+            old_status=old_status,
+            new_status=work_order.status,
+            work_order_version=work_order.version,
+            # Both filled in by machinery that does not exist yet: authentication
+            # knows the actor, the correlation-ID middleware knows the request.
+            actor_id=None,
+            source=EventSource.API,
+            reason=reason,
+            correlation_id=None,
+        )
+    )
+
+
+def _apply(
+    session: AsyncSession, work_order: WorkOrder, command: Command, reason: str | None = None
+) -> None:
+    """Move the work order and record it, or reject the command as illegal.
 
     The rules live in the domain module, so this only translates a refusal into
     the HTTP contract. `version` counts changes and is incremented here, once per
-    successful command.
+    successful command; the audit row records the version it produced.
     """
+    old_status = work_order.status
     try:
-        target = next_status(command, WorkOrderStatus(work_order.status))
+        target = next_status(command, WorkOrderStatus(old_status))
     except InvalidTransition as exc:
         raise ApiError(
             status_code=status.HTTP_409_CONFLICT,
@@ -85,6 +132,7 @@ def _apply(work_order: WorkOrder, command: Command) -> None:
         ) from exc
     work_order.status = target
     work_order.version += 1
+    _record(session, work_order, WorkOrderEventType(command), old_status, reason)
 
 
 @router.post("/{work_order_id}/assign", response_model=WorkOrderRead)
@@ -93,7 +141,7 @@ async def assign_work_order(
 ) -> WorkOrder:
     """NEW -> ASSIGNED."""
     work_order = await _get_or_404(session, work_order_id)
-    _apply(work_order, Command.ASSIGN)
+    _apply(session, work_order, Command.ASSIGN)
     work_order.assignee_id = payload.assignee_id
     await session.flush()
     return work_order
@@ -109,7 +157,7 @@ async def reassign_work_order(
     the work changed hands instead of showing two identical events.
     """
     work_order = await _get_or_404(session, work_order_id)
-    _apply(work_order, Command.REASSIGN)
+    _apply(session, work_order, Command.REASSIGN)
     work_order.assignee_id = payload.assignee_id
     await session.flush()
     return work_order
@@ -121,7 +169,7 @@ async def start_work_order(
 ) -> WorkOrder:
     """ASSIGNED -> IN_PROGRESS. The body is empty; see `StartRequest` for why it exists."""
     work_order = await _get_or_404(session, work_order_id)
-    _apply(work_order, Command.START)
+    _apply(session, work_order, Command.START)
     await session.flush()
     return work_order
 
@@ -132,7 +180,7 @@ async def complete_work_order(
 ) -> WorkOrder:
     """IN_PROGRESS -> COMPLETED. A resolution is required."""
     work_order = await _get_or_404(session, work_order_id)
-    _apply(work_order, Command.COMPLETE)
+    _apply(session, work_order, Command.COMPLETE, payload.resolution)
     work_order.resolution = payload.resolution
     await session.flush()
     return work_order
@@ -144,7 +192,26 @@ async def cancel_work_order(
 ) -> WorkOrder:
     """NEW / ASSIGNED / IN_PROGRESS -> CANCELLED. A reason is required."""
     work_order = await _get_or_404(session, work_order_id)
-    _apply(work_order, Command.CANCEL)
+    _apply(session, work_order, Command.CANCEL, payload.reason)
     work_order.cancellation_reason = payload.reason
     await session.flush()
     return work_order
+
+
+@router.get("/{work_order_id}/events", response_model=list[WorkOrderEventRead])
+async def list_work_order_events(
+    work_order_id: UUID, session: SessionDep
+) -> Sequence[WorkOrderEvent]:
+    """The work order's history, oldest first.
+
+    Ordered by the version each change produced rather than by `created_at`:
+    `now()` is the transaction start time, so events written in one transaction
+    share a timestamp and could not be ordered by it.
+    """
+    await _get_or_404(session, work_order_id)
+    result = await session.execute(
+        select(WorkOrderEvent)
+        .where(WorkOrderEvent.work_order_id == work_order_id)
+        .order_by(WorkOrderEvent.work_order_version)
+    )
+    return result.scalars().all()
