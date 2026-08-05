@@ -12,7 +12,15 @@ class UUIDPrimaryKeyMixin:
 
 
 class TimestampMixin:
-    """created_at / updated_at maintained by the database, in UTC."""
+    """created_at / updated_at maintained by the database, in UTC.
+
+    `eager_defaults` makes SQLAlchemy fetch these back with `RETURNING` on UPDATE
+    as well as INSERT. Without it, `updated_at` is merely marked expired after a
+    flush, and the next read of it attempts blocking IO — which under asyncio
+    raises `MissingGreenlet` rather than quietly issuing a second query.
+    """
+
+    __mapper_args__ = {"eager_defaults": True}
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

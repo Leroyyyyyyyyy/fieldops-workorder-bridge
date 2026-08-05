@@ -199,3 +199,51 @@ The cost is that adding a field to a request schema can now break a caller who w
 `test_rejected_work_order_leaves_no_partial_row` asserted `count(*) == 0` over the whole table. Every test runs inside a transaction that is rolled back, so I read that as "the table is empty" — but the rollback only discards *this test's* writes. Rows committed by anything else, including a manual `curl` against the same development database, are perfectly visible to it. Inserting a single row made the test fail with `assert 1 == 0`, which points at rollback rather than at the real cause.
 
 The fix is to scope the assertion to the row the request would have written, using the asset id the test generated. The general rule: an assertion over "everything in the table" is really an assertion about the environment, and the environment is not something the test controls. The neighbouring asset tests already avoided this by asserting membership rather than totals — the inconsistency between two slices was the tell, which is the argument for reviewing the second implementation of a pattern side by side with the first rather than on its own.
+
+---
+
+## Day 6 — The state machine
+
+### 30. Why explicit command endpoints rather than a status field someone can PATCH?
+
+Full reasoning is in ADR-001; the short version is that each transition has its own required data, its own preconditions and its own eventual authorisation rule, and a generic `PATCH {"status": ...}` has nowhere natural to put any of them. "Completing requires a resolution" becomes "resolution is required, but only when status is becoming COMPLETED" — a rule about a transition disguised as a field validator. Commands also give the audit trail a unit to attach to: one command, one state change, one event, one transaction.
+
+The rules live in a domain module as a pure function of `(command, current status)`, with no imports from FastAPI or SQLAlchemy, so the whole 4×5 matrix is unit-tested with no database and no HTTP. The matrix is written out by hand in the test rather than derived from the table it checks — a generated test would agree with the implementation by construction and prove nothing.
+
+### 31. (Real problem hit) `MissingGreenlet` when returning an updated row
+
+Every command endpoint failed with `MissingGreenlet: greenlet_spawn has not been called` while serialising the response — 16 tests at once. The cause was `updated_at`, which uses `onupdate=func.now()`: because that is a SQL expression, SQLAlchemy does not know the value the database computed, so after the flush it marks the attribute expired. Reading it during serialisation then attempts a blocking refresh, and under asyncio that raises instead of quietly issuing a second query.
+
+The fix is `__mapper_args__ = {"eager_defaults": True}` on the timestamp mixin, which makes SQLAlchemy fetch the value back with `RETURNING` on the UPDATE, in the same round trip — the same mechanism that already supplies `id` and `created_at` on INSERT. The alternative, `await session.refresh()` after every command, costs an extra SELECT per request to get the same answer.
+
+Worth noticing that async did not cause this bug, it *revealed* it. Synchronously the expired attribute would have triggered a silent extra query on every command and nothing would have looked wrong.
+
+### 32. Why the test cannot assert that `updated_at` moved forward
+
+The obvious assertion — after a command, `updated_at > created_at` — cannot pass here, and the reason is a property of PostgreSQL rather than of the code. `now()` returns the *transaction* start time, not the wall clock, so it is frozen for the life of a transaction; `clock_timestamp()` is the one that advances. Every request in a test shares the single outer transaction the fixture rolls back, so every timestamp inside one test is identical. In production each request is its own transaction and the value does advance.
+
+So the test asserts the property that is actually at stake and is provable here: the timestamp in the response equals the one now stored in the row, i.e. the response is not serving the value the row was loaded with. Writing the stronger-looking assertion would have produced a test that fails for a reason unrelated to the behaviour it names.
+
+### 33. Why a CHECK constraint on `status` and `priority` now, and what it cannot do
+
+Entry 18 argued the value domain belongs in the database and the transition rules belong in the application; this is where that gets paid. The CHECK constraints mean no seed script, migration or manual `UPDATE` can put a status in the table that the application has never heard of — verified by trying: `INSERT ... status = 'REOPENED'` is refused by `ck_work_orders_status`.
+
+What they cannot express is legality of a *move*, since that depends on the current row and eventually on who is asking. That stays in the domain module. The division is worth being able to state plainly: the database guarantees which values exist, the application guarantees how they change.
+
+Note also that Alembic's autogenerate detected the three new columns and neither constraint — it does not compare CHECK constraints — so both were written into the migration by hand. That is the same class of blind spot as entry 16.
+
+### 34. Why is reassignment a new command rather than one more line in the table?
+
+Reviewing the state machine against the real workflow found a gap: `ASSIGN` was legal only from `NEW`, so once a work order was assigned there was no way to change who held it. A technician going off shift meant cancelling the work order and raising a new one, which loses the history and puts a false "cancelled" in the audit trail.
+
+The cheap fix would have been to let `ASSIGN` run from `ASSIGNED` too — one line. It was rejected because of what the audit trail would then read like: two identical `ASSIGN` events, where the only way to discover that the second one changed hands is to compare payloads. Events should say what happened, so reassignment is its own command with its own name.
+
+`REASSIGN` lands on `ASSIGNED` from either `ASSIGNED` or `IN_PROGRESS`. Handing work to someone else means the new assignee has not started it, whatever the previous one had done, so they start it themselves — which also keeps "someone is working on this" from drifting away from the status that claims it.
+
+### 35. Why does `start` take a request body it never reads?
+
+Because without one, FastAPI does not look at the request body at all, and `extra="forbid"` (entry 28) never runs. Measured before fixing it: `POST /start` with `{"total_nonsense": 123}` returned 200 and ignored it, while the same junk sent to `/complete` returned 422. One API, two answers to the same question, and the inconsistent one was the endpoint with nothing to validate.
+
+The second reason is forward-looking. Optimistic concurrency will put an `expected_version` field on every command. With a body already there that is a new field on an existing shape; without one, `start` grows a body where a caller previously sent nothing, and any caller that had been sending `expected_version` all along would have had it silently ignored until the day it started being enforced.
+
+The cost is a schema class with no fields, which looks silly in isolation. Worth it: a rule that holds on three endpoints out of four is not a rule, it is a habit.
