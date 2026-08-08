@@ -287,3 +287,32 @@ The reason is that the events could only be created through the API, in order, s
 The fix was to write two events directly to the database with versions 3 and 2, in that order, and then ask the API for the history. Now the physical order and the correct order disagree, so only real sorting can produce `[1, 2, 3]`. Verified by changing the query back to `ORDER BY created_at`: the new test fails, the old one still passes.
 
 The general lesson is about how to test any ordering, deduplication or filtering: build the input so that the wrong implementation produces a visibly different answer. If the data happens to arrive in the right shape already, the test is describing the fixture rather than the code.
+
+---
+
+## Day 8 — Seed data that can be queried honestly
+
+### 41. Why does the seed generator walk the real state machine?
+
+Because the alternative is a second, quieter definition of what a legal history looks like. The generator picks a target status and a path of commands to reach it, then applies each one through the same `next_status()` the API uses — so an illegal sequence cannot be produced even by mistake, and if the state machine changes the generator follows it instead of drifting from it.
+
+That matters because the seeded dataset is the only data anyone will actually query: the demo runs on it, and so does the index work. A dataset where work orders have no history, or histories that could never have happened, would quietly contradict the guarantee the whole project is built on. The test suite makes the point directly — with 50,000 seeded work orders in the database, the invariant test that looks for work orders without events still passes, because the generated data satisfies the same rule the API enforces.
+
+### 42. Why is the data skewed, and what breaks if it is not?
+
+Uniform random data produces query plans no real table would produce, which makes any index comparison meaningless. So statuses lean heavily on completed work, a quarter of the crew holds about 70% of the jobs, 5% of the plant accounts for a disproportionate share of the backlog, and timestamps spread across 18 months rather than clustering at `now()`.
+
+The payoff is measurable. Filtering 50,000 work orders by status and priority:
+
+| | Plan | Buffers | Time |
+|---|---|---:|---:|
+| No index | Seq Scan, 49,828 rows discarded by filter | 1,165 | 3.9 ms |
+| With `(status, priority)` | Bitmap Heap Scan | 163 | 0.5 ms |
+
+Seven times fewer buffers read. On a few dozen rows both plans would have been a sequential scan and the comparison would have shown nothing.
+
+### 43. The row count that came out lower than planned, and why I left it
+
+The plan estimated ~200,000 events; the generator produces 176,732 from 50,000 work orders, an average of 3.53 each. That is simply what the status distribution yields: a work order that is still `NEW` has one event, one that ran to completion has four, and only a fifth are ever reassigned.
+
+Reaching 200,000 exactly would have meant reassigning roughly 70% of all work orders, which no maintenance crew does. The estimate was a proxy for "enough rows that query plans are meaningful", and 176,732 satisfies that — the `EXPLAIN` comparison above is the actual acceptance test. Bending the distribution to hit a round number would have cost the thing the number was standing in for.

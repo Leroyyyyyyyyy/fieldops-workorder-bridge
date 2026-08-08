@@ -27,7 +27,12 @@ docker compose up -d db                  # start PostgreSQL 18
 uv run alembic upgrade head              # apply migrations to an empty DB
 uv run uvicorn app.main:app --reload     # start the API at http://127.0.0.1:8000
 uv run pytest                            # run the test suite (needs the DB up)
+uv run python -m scripts.seed --yes      # optional: ~50k work orders of realistic data
 ```
+
+The seed generator replaces the contents of all three tables, which is why it
+asks for `--yes`. It walks the real state machine to build each work order's
+history, so the generated data satisfies the same audit invariant the API does.
 
 Interactive API docs: http://127.0.0.1:8000/docs
 
