@@ -277,3 +277,13 @@ So there are two enums, with `WorkOrderEventType` a superset of `Command`, and a
 ### 39. Autogenerate rendered the CHECK constraints this time
 
 Entry 33 noted that Alembic detected neither CHECK constraint when they were added to an existing table. Adding a *new* table with the same constraints, autogenerate emitted both without prompting. The distinction is that it renders constraints as part of `create_table`, but does not *compare* constraints on a table that already exists. Useful to know precisely, because "Alembic doesn't handle CHECK constraints" is the kind of half-true rule that leads to writing migrations by hand that did not need it.
+
+### 40. A test called `ordered` that did not test ordering
+
+Breaking the sort key on purpose — writing a constant into `work_order_version` instead of the real one — failed exactly one assertion, and not the one that mattered. The list of event types still came back in the right order and passed; only the assertion on the version numbers themselves failed.
+
+The reason is that the events could only be created through the API, in order, so the rows were already in the right sequence physically. PostgreSQL returned them that way when every sort value was identical — which it is free to do, and free not to do, since `ORDER BY` on equal values guarantees nothing. The test named "ordered" was passing on a coincidence of insertion order, so a refactor that put `ORDER BY created_at` back would not have been caught.
+
+The fix was to write two events directly to the database with versions 3 and 2, in that order, and then ask the API for the history. Now the physical order and the correct order disagree, so only real sorting can produce `[1, 2, 3]`. Verified by changing the query back to `ORDER BY created_at`: the new test fails, the old one still passes.
+
+The general lesson is about how to test any ordering, deduplication or filtering: build the input so that the wrong implementation produces a visibly different answer. If the data happens to arrive in the right shape already, the test is describing the fixture rather than the code.

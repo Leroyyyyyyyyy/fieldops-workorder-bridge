@@ -1,5 +1,5 @@
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx2 import AsyncClient
@@ -159,3 +159,38 @@ async def test_events_for_unknown_work_order_returns_404(client: AsyncClient) ->
 
     assert response.status_code == 404
     assert response.json()["code"] == "WORK_ORDER_NOT_FOUND"
+
+
+async def test_history_is_sorted_by_version_not_by_insertion_order(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Write the events backwards on purpose, so the ORDER BY is what is tested.
+
+    Driven through the API the events can only ever be written in the right order,
+    so an order assertion there passes whether or not anything sorts them — rows
+    returned in insertion order satisfy it either way. Inserting out of order is
+    the only way to tell a real sort from a lucky one.
+    """
+    work_order = await create_work_order(client)  # CREATE event, version 1
+    work_order_id = UUID(work_order["id"])
+
+    for version, old_status, new_status in [
+        (3, "ASSIGNED", "IN_PROGRESS"),
+        (2, "NEW", "ASSIGNED"),
+    ]:
+        db_session.add(
+            WorkOrderEvent(
+                work_order_id=work_order_id,
+                event_type="START" if version == 3 else "ASSIGN",
+                old_status=old_status,
+                new_status=new_status,
+                work_order_version=version,
+                source="API",
+            )
+        )
+    await db_session.flush()
+
+    events = await history(client, str(work_order_id))
+
+    assert [event["work_order_version"] for event in events] == [1, 2, 3]
+    assert [event["event_type"] for event in events] == ["CREATE", "ASSIGN", "START"]
