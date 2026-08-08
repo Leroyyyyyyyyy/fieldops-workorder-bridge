@@ -41,6 +41,29 @@ class Command(StrEnum):
     CANCEL = "CANCEL"
 
 
+class WorkOrderEventType(StrEnum):
+    """What an audit event records.
+
+    Every `Command` has a matching member — a test enforces that — plus CREATE,
+    which is not a command because it is not a transition out of some existing
+    status. Including it means the event stream is the whole life of a work
+    order rather than everything except its first moment.
+    """
+
+    CREATE = "CREATE"
+    ASSIGN = "ASSIGN"
+    REASSIGN = "REASSIGN"
+    START = "START"
+    COMPLETE = "COMPLETE"
+    CANCEL = "CANCEL"
+
+
+class EventSource(StrEnum):
+    """How the change arrived. Only one way in so far; vendor webhooks add another."""
+
+    API = "API"
+
+
 class Transition(NamedTuple):
     allowed_from: frozenset[WorkOrderStatus]
     to: WorkOrderStatus
