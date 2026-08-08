@@ -10,7 +10,7 @@ from app.models.work_order import WorkOrder
 
 pytestmark = pytest.mark.integration
 
-TITLE = "Bearing running hot"
+TITLE = "Front left brake pack over temperature"
 
 
 async def create_asset(client: AsyncClient) -> str:
@@ -24,9 +24,9 @@ async def create_asset(client: AsyncClient) -> str:
         "/assets",
         json={
             "external_id": f"VND-ASSET-{uuid4().hex[:12]}",
-            "site": "North Yard",
-            "name": "Crusher 1",
-            "asset_type": "CRUSHER",
+            "site": "Newman",
+            "name": "Haul truck HT-417",
+            "asset_type": "HAUL_TRUCK",
         },
     )
     assert response.status_code == 201
@@ -38,7 +38,7 @@ def work_order_payload(asset_id: str, **overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "asset_id": asset_id,
         "title": TITLE,
-        "description": "Reported by night shift; temperature above threshold.",
+        "description": "Flagged by onboard monitoring; temperature above threshold.",
         "priority": "HIGH",
     }
     return payload | overrides

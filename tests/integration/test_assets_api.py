@@ -20,8 +20,8 @@ def new_asset(**overrides: Any) -> dict[str, Any]:
     """
     payload: dict[str, Any] = {
         "external_id": f"VND-ASSET-{uuid4().hex[:12]}",
-        "site": "North Yard",
-        "name": "Conveyor 3",
+        "site": "Tom Price",
+        "name": "Overland conveyor CV-102",
         "asset_type": "CONVEYOR",
     }
     return payload | overrides
