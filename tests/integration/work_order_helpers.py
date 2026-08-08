@@ -16,8 +16,8 @@ async def create_work_order(client: AsyncClient) -> dict[str, Any]:
             "/assets",
             json={
                 "external_id": f"VND-ASSET-{uuid4().hex[:12]}",
-                "site": "North Yard",
-                "name": "Crusher 1",
+                "site": "Paraburdoo",
+                "name": "Primary crusher CR-03",
                 "asset_type": "CRUSHER",
             },
         )
@@ -26,8 +26,8 @@ async def create_work_order(client: AsyncClient) -> dict[str, Any]:
         "/work-orders",
         json={
             "asset_id": asset["id"],
-            "title": "Bearing running hot",
-            "description": "Reported by night shift.",
+            "title": "Drive end bearing over temperature",
+            "description": "Flagged by condition monitoring on night shift.",
             "priority": "HIGH",
         },
     )

@@ -9,7 +9,7 @@ from app.api.work_orders import router as work_orders_router
 def create_app() -> FastAPI:
     app = FastAPI(
         title="FieldOps Work Order Bridge",
-        description="Field service work order integration API.",
+        description="Work order integration API for mining maintenance contractors.",
         version="0.1.0",
     )
     register_error_handlers(app)
