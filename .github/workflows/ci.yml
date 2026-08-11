@@ -40,7 +40,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Type check
-        run: uv run mypy app tests
+        run: uv run mypy app tests scripts
 
       - name: Migration smoke test (empty DB -> head)
         run: uv run alembic upgrade head
