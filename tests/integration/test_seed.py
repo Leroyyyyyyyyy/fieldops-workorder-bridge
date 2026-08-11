@@ -8,7 +8,12 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.work_order_status import Priority, WorkOrderEventType, WorkOrderStatus
+from app.domain.work_order_status import (
+    TRANSITIONS,
+    Priority,
+    WorkOrderEventType,
+    WorkOrderStatus,
+)
 from app.models.asset import Asset
 from app.models.work_order import WorkOrder
 from app.models.work_order_event import WorkOrderEvent
@@ -144,3 +149,29 @@ async def test_seeding_twice_leaves_one_dataset(db_session: AsyncSession) -> Non
 
     assert len(second) == WORK_ORDERS
     assert first == second
+
+
+async def test_generated_data_covers_every_legal_transition(
+    seeded: tuple[int, int, int], db_session: AsyncSession
+) -> None:
+    """Legal histories are not enough — the dataset has to exercise the whole
+    state machine, or a branch nobody generated is a branch nobody can query.
+
+    The expected set is derived from TRANSITIONS rather than written out, because
+    the point is coverage of whatever the state machine currently allows: adding a
+    transition should fail this until the generator produces it.
+    """
+    expected: set[tuple[str | None, str]] = {(None, str(WorkOrderStatus.NEW))}
+    for transition in TRANSITIONS.values():
+        for source in transition.allowed_from:
+            expected.add((str(source), str(transition.to)))
+
+    actual = set(
+        (
+            await db_session.execute(
+                select(WorkOrderEvent.old_status, WorkOrderEvent.new_status).distinct()
+            )
+        ).all()
+    )
+
+    assert expected <= actual, f"never generated: {sorted(expected - actual)}"
