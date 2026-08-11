@@ -315,4 +315,14 @@ Seven times fewer buffers read. On a few dozen rows both plans would have been a
 
 The plan estimated ~200,000 events; the generator produces 176,732 from 50,000 work orders, an average of 3.53 each. That is simply what the status distribution yields: a work order that is still `NEW` has one event, one that ran to completion has four, and only a fifth are ever reassigned.
 
-Reaching 200,000 exactly would have meant reassigning roughly 70% of all work orders, which no maintenance crew does. The estimate was a proxy for "enough rows that query plans are meaningful", and 176,732 satisfies that — the `EXPLAIN` comparison above is the actual acceptance test. Bending the distribution to hit a round number would have cost the thing the number was standing in for.
+Reaching 200,000 exactly would have meant reassigning roughly 70% of all work orders, which no maintenance crew does. (A later fix took it to 185,219 — see entry 44 — but as a side effect of covering a missing case, not by chasing the number.) The estimate was a proxy for "enough rows that query plans are meaningful", and 176,732 satisfies that — the `EXPLAIN` comparison above is the actual acceptance test. Bending the distribution to hit a round number would have cost the thing the number was standing in for.
+
+### 44. (Found in review) the generator never produced the case the command exists for
+
+Grouping the seeded events by `(old_status, new_status)` — a query that checks the data rather than the code that wrote it — returned eight distinct transitions where the state machine allows nine. The missing one was `IN_PROGRESS → ASSIGNED`: reassigning work that has already started.
+
+That is precisely the scenario that justified making REASSIGN its own command (entry 34) — a tradesperson going off shift mid-job. The generator only ever inserted reassignments between assigning and starting, so 50,000 work orders contained not a single instance of the interesting case, and any later query about disrupted jobs would have found nothing to report.
+
+Two things worth keeping from it. First, the check that found it did not read the generator at all; it asked the database what was actually there and compared that against the contract. Reviewing generated data by reading the generator would have missed this, because the code was not wrong — every transition it produced was legal, it just never produced them all.
+
+Second, the fix included a test that derives the expected set from `TRANSITIONS` rather than listing it, so adding a transition to the state machine fails the seed tests until the generator produces it. Coverage of a state machine is a property worth asserting, not just legality.

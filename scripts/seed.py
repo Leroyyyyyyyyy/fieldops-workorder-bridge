@@ -159,27 +159,42 @@ def _technician_pool(rng: random.Random) -> tuple[list[uuid.UUID], list[float]]:
     return crew, weights
 
 
+def _started_path(rng: random.Random) -> list[Command]:
+    """Assign, then start, with reassignment possible on either side of starting.
+
+    Reassigning work that is already under way is the case the REASSIGN command
+    exists for — a tradesperson goes off shift mid-job — so the dataset has to
+    contain it. It sends the work order back to ASSIGNED, which means the new
+    assignee starts it again, hence the paired START.
+    """
+    before_start = rng.choices([0, 1, 2], weights=[0.82, 0.15, 0.03], k=1)[0]
+    mid_job = rng.choices([0, 1, 2], weights=[0.90, 0.08, 0.02], k=1)[0]
+    path = [Command.ASSIGN] + [Command.REASSIGN] * before_start + [Command.START]
+    for _ in range(mid_job):
+        path += [Command.REASSIGN, Command.START]
+    return path
+
+
 def _command_path(rng: random.Random, target: WorkOrderStatus) -> list[Command]:
     """Commands that lead to `target`, with reassignment mixed in where legal."""
     if target is WorkOrderStatus.NEW:
         return []
-
-    reassignments = rng.choices([0, 1, 2], weights=[0.82, 0.15, 0.03], k=1)[0]
 
     if target is WorkOrderStatus.CANCELLED:
         # Cancelled work is abandoned at different points in its life.
         stage = rng.choices(["new", "assigned", "in_progress"], weights=[0.4, 0.35, 0.25], k=1)[0]
         if stage == "new":
             return [Command.CANCEL]
-        path = [Command.ASSIGN] + [Command.REASSIGN] * reassignments
         if stage == "in_progress":
-            path.append(Command.START)
-        return [*path, Command.CANCEL]
+            return [*_started_path(rng), Command.CANCEL]
+        reassignments = rng.choices([0, 1, 2], weights=[0.82, 0.15, 0.03], k=1)[0]
+        return [Command.ASSIGN, *[Command.REASSIGN] * reassignments, Command.CANCEL]
 
-    path = [Command.ASSIGN] + [Command.REASSIGN] * reassignments
     if target is WorkOrderStatus.ASSIGNED:
-        return path
-    path.append(Command.START)
+        reassignments = rng.choices([0, 1, 2], weights=[0.82, 0.15, 0.03], k=1)[0]
+        return [Command.ASSIGN, *[Command.REASSIGN] * reassignments]
+
+    path = _started_path(rng)
     if target is WorkOrderStatus.IN_PROGRESS:
         return path
     return [*path, Command.COMPLETE]
