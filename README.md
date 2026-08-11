@@ -6,16 +6,16 @@ Python 3.14 · FastAPI · SQLAlchemy 2 (async) · PostgreSQL 18 · Alembic · 93
 
 ```mermaid
 flowchart LR
-    V["Vendor / condition<br/>monitoring"] --> API
-    D["Planner<br/>Tradesperson"] --> API
+    V["Vendor and condition monitoring"] --> API
+    D["Planners and tradespeople"] --> API
 
     subgraph API["FastAPI"]
         direction TB
-        R["Router<br/>validate request"] --> S["State machine<br/>is this move legal?"]
-        S --> W["Write change<br/>+ audit event"]
+        R["Validate the request"] --> S["Is this move legal?"]
+        S --> W["Write the change and its audit event"]
     end
 
-    API -->|"one transaction<br/>per request"| DB[("PostgreSQL 18")]
+    API -->|"one transaction per request"| DB[("PostgreSQL 18")]
 
     DB --- T1["work_orders"]
     DB --- T2["work_order_events"]
