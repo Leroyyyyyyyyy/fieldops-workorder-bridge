@@ -113,7 +113,7 @@ Still to come: webhook signature verification and idempotency, JWT and role-base
 | Schema | Alembic migrations only; server-side defaults so the database is the single writer of record |
 | Types | `mypy --strict` over `app`, `tests` and `scripts`, enforced in CI alongside Ruff and a migration smoke test |
 
-Decisions are logged as they are made in [docs/interview-notes.md](docs/interview-notes.md) — including the ones that turned out to be wrong, and what testing them revealed. The product boundary and non-goals are in [PROJECT.md](PROJECT.md).
+The product boundary and non-goals are in [PROJECT.md](PROJECT.md); the state machine decision is in [docs/adr/001-explicit-state-transitions.md](docs/adr/001-explicit-state-transitions.md).
 
 ## References and attribution
 
@@ -124,3 +124,7 @@ Built from scratch; selected patterns referenced from:
 - [Azure-Samples/msdocs-fastapi-postgresql-sample-app](https://github.com/Azure-Samples/msdocs-fastapi-postgresql-sample-app) — App Service / OIDC deployment wiring
 
 What was adopted versus rejected from each is documented as the project evolves.
+
+## License
+
+[MIT](LICENSE)
